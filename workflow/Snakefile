@@ -1,0 +1,95 @@
+from pathlib import Path
+from snakebids.paths import bids
+
+# Load the config
+configfile: "./config/config.yml"
+
+# set output_dir and cfmm_id
+output_dir = config["output_dir"]
+cfmm_id = config['parse_args']['cfmm_id']
+
+# to do -- make these into wildcards
+subject = "P214"
+session = "SNSX_20241220"
+
+# rule all
+rule all:
+    input:
+        bids(
+            root=output_dir,
+            datatype="anat",
+            desc='prepdwi',
+            suffix='.nii.gz',
+            subject=subject,
+            session=session,
+        )
+
+# run cfmm2tar
+rule cfmm2tar:
+    output: tar_dir=f"{output_dir}/sourcedata/SNSX_P{cfmm_id}.tar"
+    shell: "singularity run docker://khanlab/cfmm2tar:v1.0.0 -n SNSX_P{cfmm_id}"
+
+# run tar2bids
+rule tar2bids:
+    input:
+        tar_file=f"{output_dir}/sourcedata/SNSX_P{cfmm_id}.tar"
+    output:
+        directory(bids(
+            root=output_dir,
+            datatype="anat",
+            desc='bids',
+            suffix='.nii.gz',
+            subject=subject,
+            session=session,
+        ))
+    shell: "singularity run docker://khanlab/tar2bids:latest -h cfmm_base.py -o {output} {input.tar_file}"
+
+# run gradcorrect
+rule run_gradcorrect:
+    input:
+        bids(
+            root=output_dir,
+            datatype="anat",
+            desc='bids',
+            suffix='.nii.gz',
+            subject=subject,
+            session=session,
+        )
+    output:
+        bids(
+            root=output_dir,
+            datatype="anat",
+            desc='gradcorrect',
+            suffix='.nii.gz',
+            subject=subject,
+            session=session,
+        )
+    params:
+        grad_coeffs=config['parse_args']['grad_coeffs']
+    shell: 'singularity run docker://khanlab/gradcorrect:latest {input} {output} participant --grad_coeff_file {params.grad_coeffs}'
+
+# run prepdwi
+rule prepdwi:
+    input:
+        bids(
+            root=output_dir,
+            datatype="anat",
+            desc='gradcorrect',
+            suffix='.nii.gz',
+            subject=subject,
+            session=session,
+        )
+    output:
+        bids(
+            root=output_dir,
+            datatype="anat",
+            desc='prepdwi',
+            suffix='.nii.gz',
+            subject=subject,
+            session=session,
+        )
+    params:
+        grad_coeffs=config['parse_args']['grad_coeffs'],
+    shell: 'singularity run docker://khanlab/prepdwi:latest snakedwi {input} {output} participant --gradcorrect_coeffs {params.grad_coeffs} --cores all'
+
+
